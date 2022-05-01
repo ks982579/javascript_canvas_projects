@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<meta name="author" content="Kevin Sullivan">
+		<style>
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+			html {
+				height: 100%;
+				width: 100%;
+			}
+			body {
+				min-height: 100%;
+			}
+			canvas {
+				border: 1px solid black;
+				/*height: 50%;
+				width: 50%;*/
+			}
+			.cntr {
+				height: 100vh;
+				width: 100%;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="cntr">
+			<canvas id="cnvs"></canvas>
+		</div>
+	</body>
+	<script>
+		function getElm(elm){
+			return document.getElementById(elm);
+		}
+		
+		const canvas = getElm("cnvs");
+		
+		canvas.height = Math.floor(window.innerHeight*0.8)
+		canvas.width = Math.floor(window.innerWidth*0.8)
+		
+		/* -------------------------------------------------------- */
+		
+		const control_panel = {
+			canvasid: "cnvs",
+			maxpixels: 400,
+			mousearea: 45, //area around mouse to affect pixels
+			framespersecond: 30, //60 fps is about max anyway.
+			pixelSpread: 20,
+			spreadGrowth: 100, //the number is divided by 1000 to make it complicated ;)
+			explosionForce: 25000, //also divided by 1000;
+			pixelText: "KSullDev.Space", //Not too long
+		}
+		
+		/* -------------------------------------------------------- */
+		
+		class BasicPixel {
+			constructor(coordX, coordY, radius, context){
+				this.x = coordX;
+				this.y = coordY;
+				this.r = radius;
+				this.ctx = context;
+				this.ux = 0; //These will be like unit vectors to direction
+				this.uy = 0; //These will be like unit vectors to direction
+			}//end constructor
+			random_move(spread, gravity, center){
+				this.x += Math.floor(Math.random()*(spread+1))-(spread/2)-(this.x-center.x)*gravity;
+				this.y += Math.floor(Math.random()*(spread+1))-(spread/2)-(this.y-center.y)*gravity;
+			}
+			set_unit_vectors(center){
+				let a = this.x-center.x;
+				let b = this.y-center.y;
+				let c_2 = a**2+b**2;
+				var theta = Math.atan(Math.abs(b)/Math.abs(a))
+				
+				this.ux = Math.cos(theta)*(a/Math.abs(a))
+				this.uy = Math.sin(theta)*(b/Math.abs(b))
+			}
+			blow_up(force){
+				this.x += this.ux*force;
+				this.y += this.uy*force;
+			}
+			draw() {
+				this.ctx.beginPath();
+				this.ctx.arc(Math.round(this.x,0), Math.round(this.y,0), this.r, 0, Math.PI*2);
+				this.ctx.fill();
+			}
+		};
+		
+		class TextPixel extends BasicPixel {
+			constructor(startX, startY, homeX, homeY, radius, context){
+				super(startX, startY, radius, context);
+				this.basex = homeX;
+				this.basey = homeY;
+				this.vx = 0;
+				this.vy =0;
+				this.dx = 10000;
+				this.dy = 10000;
+				this.dist = 10000;
+				this.close = false;
+			}//end constructor
+			
+			find_dist_btwn(mouseObj){
+				/* Pass in mouse x and y coordinates to get distance from pixel */
+				// distance = moveTo - moveAway
+				this.dx = this.x - mouseObj.x;
+				this.dy = this.y - mouseObj.y; //because coordinates are top left instead of bottom... typical Cartesian Coordinates
+				/* pythagorean theorem */
+				this.dist = Math.sqrt(this.dx**2+this.dy**2)
+			}
+			
+			update_position(mouseObj){
+				this.find_dist_btwn(mouseObj);
+				
+				//Function Variables
+				let isNotHome = (this.x != this.basex || this.y != this.basey);
+				let dx2 = this.basex - this.x;
+				let dy2 = this.basey - this.y;
+				let interDist = Math.sqrt(dx2**2+dy2**2);
+				
+				if(this.dist < mouseObj.r){
+					this.close = true;
+					let theta = Math.atan(Math.abs(this.dy)/Math.abs(this.dx));
+					
+					this.vx += (5/30)*Math.cos(theta)*(this.dx/Math.abs(this.dx)); //(this.dx/this.dist)*5*((1-this.dist/mouseObj.r)**2);
+					this.vy += (5/30)*Math.sin(theta)*(this.dy/Math.abs(this.dy));
+				} else {
+					this.close = false;
+					if(isNotHome && interDist < 10){
+						this.x = this.basex;
+						this.y = this.basey;
+						this.vx = 0;
+						this.vy = 0;
+					}
+				} //End Mouse Stuff
+				
+				// Check if the particle is home
+				isNotHome = (this.x != this.basex || this.y != this.basey);
+				
+				if(isNotHome){
+					let interTheta = Math.atan(Math.abs(dy2)/Math.abs(dx2));
+					this.vx += (1/30)*(interDist/50)*Math.cos(interTheta)*(dx2/Math.abs(dx2));
+					this.vy += (1/30)*(interDist/50)*Math.sin(interTheta)*(dy2/Math.abs(dy2));					
+				}
+				this.x += this.vx*0.99;
+				this.y += this.vy*0.99;
+			}//End UPDATE_POSTION
+		}//End TextPixel Class
+		
+		class Director {
+			constructor(cp){
+				/* Takes in the Control Panel to set this class */
+				this.canvas = document.getElementById(cp.canvasid);
+				this.ctx = this.canvas.getContext('2d');
+				this.cntr = {x: this.canvas.width/2, y: this.canvas.height/2};
+				this.maxPixels = cp.maxpixels;
+				this.fps = cp.framespersecond;
+				this.frameLapse = 1000/this.fps;
+				this.spread = cp.pixelSpread;
+				this.spreadGrowth = cp.spreadGrowth/1000;
+				this.force = cp.explosionForce/1000;
+				this.text = cp.pixelText; 
+				
+				/* Required Later */
+				this.lastFrameTime = null;
+				this.frameCount = 0;
+				this.pixelList = [];
+				
+				this.mouse = {
+					x: 10000,
+					y: 10000,
+					r: cp.mousearea
+				}
+				this.canvas.addEventListener('mousemove', (evnt)=>{
+					this.mouse.x = evnt.offsetX;
+					this.mouse.y = evnt.offsetY;
+				});
+				this.canvas.addEventListener('mouseout', (evnt)=>{
+					this.mouse.x = 10000;
+					this.mouse.y = 10000;
+				});
+				
+				this.helpers = {
+					loadBasicPixels: () => {
+						for(let _in = 0; _in < this.maxPixels; _in++){
+							this.pixelList.push(new BasicPixel(this.cntr.x, this.cntr.y, 2, this.ctx));
+						}
+					},
+					getTextMap: () => {
+						this.ctx.font = "24px bold"; 
+						this.ctx.fillText(this.text, 10, 20);
+						const textMap = this.ctx.getImageData(0,0,canvas.width, canvas.height)
+						this.ctx.clearRect(0,0,canvas.width,canvas.height);
+						return textMap;
+					},
+					loadTextPixels: (textMap) => {
+						//Turn 
+						let _rgba = 0;
+						let _pix = {};
+						let _radius = Math.sqrt((canvas.width/2)**2+(canvas.height/2)**2);
+						let _coord = {
+							x: 0,
+							y: 0,
+						}
+						let _border = {
+							top: 0
+						}
+						while(_rgba < textMap.data.length){
+							_pix.red = textMap.data[_rgba]
+							_rgba++
+							_pix.green = textMap.data[_rgba]
+							_rgba++
+							_pix.blue = textMap.data[_rgba]
+							_rgba++
+							_pix.alpha = textMap.data[_rgba]
+							
+							//If pixel exists, create a Pixel and push into Pixel Array
+							if(_pix.alpha > 100){
+								let radians = (Math.random()*360)*Math.PI/180;
+								this.pixelList.push(new TextPixel(Math.cos(radians)*(_radius+10)+this.cntr.x, Math.sin(radians)*(_radius+10)+this.cntr.y, _coord.x, _coord.y, 1, this.ctx));
+								
+								// To figure out the height and width of the text. 
+								if(this.pixelList.length < 2){
+									_border.top = _coord.y;
+									_border.bottom = _coord.y;
+									_border.left = _coord.x;
+									_border.right = _coord.x;
+								} else {
+									_border.top = (_border.top > _coord.y) ? _coord.y : _border.top;
+									_border.bottom = (_border.bottom < _coord.y) ? _coord.y : _border.bottom;
+									_border.left = (_border.left > _coord.x) ? _coord.x : _border.left;
+									_border.right = (_border.right < _coord.x) ? _coord.x : _border.right;
+								}//End nested If
+							}//End IF we have a real pixel
+							
+							// set up next run
+							_rgba++;
+							_coord.x++;
+							if(_coord.x > textMap.width){
+								_coord.x = 1;
+								_coord.y++;
+							}
+						}// end While Loop
+						let expansion = ((this.canvas.width/9)*7)/(_border.right-_border.left);
+						let _shiftRight = this.canvas.width/9;
+						let _shiftDown = (1/2)*(this.canvas.height-(_border.bottom-_border.top)*expansion)
+						for(let _e of this.pixelList){
+							_e.x += 0 //this.cntr.x; -> Already fixed...
+							_e.y += 0 //this.cntr.y; -> Already fixed... 
+							//translate to top left...
+							_e.basex -= _border.left;
+							_e.basey -= _border.top
+							//Expand to 7/9's the canvas
+							_e.basex *= expansion;
+							_e.basey *= expansion;
+							_e.r *= Math.floor(expansion*0.8);
+							//Translate to Center on canvas
+							_e.basex += _shiftRight;
+							_e.basey += _shiftDown;
+						}
+					} // END LOADTEXTPIXELS HELPER...
+				}//End helpers
+			}//End Constructor
+			
+			rollNextFrame(){
+				return (this.lastFrameTime < Date.now()-this.frameLapse);
+			};
+						
+			instability(callBack=null, duration=5){
+				this.frameCount = 0; //resetting
+				this.lastFrameTime = (this.lastFrameTime != null) ? this.lastFrameTime : Date.now();
+				this.helpers.loadBasicPixels(); //fills a list of basic pixels
+				
+				let startScene = () => {
+					if(this.rollNextFrame()) {
+						this.lastFrameTime += this.frameLapse;
+						this.ctx.clearRect(0,0,this.canvas.width, this.canvas.height);
+						if(this.frameCount < this.fps * duration){
+							for(let _e of this.pixelList){
+								_e.random_move(this.spread, (5/1000), this.cntr)
+								_e.draw();
+							}
+							this.frameCount++;
+							this.spread+=this.spreadGrowth;
+						} else {
+							if(callBack != null){
+								return callBack();
+							} else {
+								return null;
+							}
+						}
+					}
+					requestAnimationFrame(startScene);
+				}// end start scene
+				requestAnimationFrame(startScene);
+			}//end instability
+		
+			implosion(callBack=null, duration=5){
+				this.frameCount = 0; //resetting
+				this.lastFrameTime = (this.lastFrameTime != null) ? this.lastFrameTime : Date.now();
+			
+				let startScene = () => {
+					if(this.rollNextFrame()) {
+						this.lastFrameTime += this.frameLapse;
+						this.ctx.clearRect(0,0,this.canvas.width, this.canvas.height);
+						if(this.frameCount < this.fps * duration){
+							for(let _e of this.pixelList){
+								_e.random_move(this.spread, (75/1000), this.cntr)
+								_e.draw();
+							}
+							this.frameCount++;
+							this.spread -= (this.spread <= 7) ? 0 : this.spreadGrowth*1.1;
+						} else {
+							if(callBack != null){
+								return callBack();
+							} else {
+								return null;
+							}
+						}
+					}
+					requestAnimationFrame(startScene);
+				}// end start scene
+				requestAnimationFrame(startScene);
+			}//end implosion
+			
+			explosion (callBack=null){
+				this.frameCount = 0; //resetting
+				this.lastFrameTime = (this.lastFrameTime != null) ? this.lastFrameTime : Date.now();
+				
+				for(let _e of this.pixelList){
+					_e.set_unit_vectors(this.cntr);
+				}
+			
+				let startScene = () => {
+					if(this.rollNextFrame()) {
+						this.lastFrameTime += this.frameLapse;
+						this.ctx.clearRect(0,0,this.canvas.width, this.canvas.height);
+						if(this.pixelList.length > 0){
+							for(let _e of this.pixelList){
+								_e.blow_up(this.force)
+								_e.draw();
+								if(_e.x > canvas.width || _e.x < 0 || _e.y > canvas.height || _e.y < 0){
+									// IF pixel is off screen, remove pixel from list;
+									this.pixelList.splice(this.pixelList.indexOf(_e),1);
+								}
+							}
+						} else {
+							if(callBack != null){
+								return callBack();
+							} else {
+								return null;
+							}
+						}
+					}
+					requestAnimationFrame(startScene);
+				}// end start scene
+				requestAnimationFrame(startScene);
+			}//end implosion
+			
+			credits(){
+				//Getting Image Data. 
+				this.helpers.loadTextPixels(this.helpers.getTextMap());
+				
+				let startScene = () => {
+					if(this.rollNextFrame()) {
+						this.lastFrameTime += this.frameLapse;
+						this.ctx.clearRect(0,0,this.canvas.width, this.canvas.height);
+						for(let _e of this.pixelList){
+							_e.update_position(this.mouse);
+							_e.draw();
+						}
+					}
+					requestAnimationFrame(startScene);
+				}// end start scene
+				requestAnimationFrame(startScene);
+			}// END CREDITS
+		/* -------------- ending class -------------- */
+		}// End Director Class
+		
+		/* ------- TESTING ------- */
+		let kevin = new Director(control_panel);
+		let basicDot = new BasicPixel(0,0,3, kevin.ctx);
+		let basicPixel = new TextPixel(0,0,3, kevin.ctx);
+		kevin.instability(()=>{
+			kevin.implosion(()=>{
+				kevin.explosion(()=>{
+					kevin.credits();
+				})
+			},2);
+		},3);
+		/* ------- TESTING ------- */
+	</script>
+</html>
+<!-- 
+One of the biggest challenges was having the particles blow up in a circular shape.
+Without the use of triginometry, it was blowing up in a square shape. 
+URL: https://www.mathsisfun.com/algebra/trig-finding-angle-right-triangle.html
+
+I also decided to work with velocity and a discrete form of acceleration for the final scene
+which proved to be quite challenging, especially since the pieces kept revolving around their
+base points. This was kind of corrected with a "snap in place" feature...
+-->
